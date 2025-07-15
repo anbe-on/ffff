@@ -177,7 +177,7 @@ status_line() {
     printf '\e7\e[%sH\e[3%s;4%sm%*s\r%s %s%s\e[m\e[%sH\e[K\e8' \
            "$((LINES-1))" \
            "${FFF_COL5:-0}" \
-           "${FFF_COL2:-1}" \
+           "${FFF_COL2:-7}" \
            "$COLUMNS" "" \
            "($((scroll+1))/$((list_total+1)))" \
            "${marked_files[*]:+${mark_ui}}" \
@@ -362,88 +362,89 @@ draw_dir() {
 }
 
 draw_img() {
-    # Draw an image file on the screen using w3m-img.
-    # We can use the framebuffer; set win_info_cmd as appropriate.
-    [[ $(tty) == /dev/tty[0-9]* && -w /dev/fb0 ]] &&
-        win_info_cmd=fbset
-
-    # X isn't running and we can't use the framebuffer, do nothing.
-    [[ -z $DISPLAY && $win_info_cmd != fbset ]] &&
-        return
-
-    # File isn't an image file, do nothing.
+    # Draw an image file on the screen using chafa.
+    [[ -f "${list[scroll]}" ]] || return
     get_mime_type "${list[scroll]}"
-    [[ $mime_type != image/* ]] &&
-        return
-
-    # w3m-img isn't installed, do nothing.
-    type -p "$w3m" &>/dev/null || {
-        cmd_line "error: Couldn't find 'w3m-img', is it installed?"
+    [[ $mime_type != image/* ]] && return
+    # chafa isn't installed, do nothing.
+    type -p chafa &>/dev/null || {
+        cmd_line "error: Couldn't find 'chafa', is it installed?"
         return
     }
-
-    # $win_info_cmd isn't installed, do nothing.
-    type -p "${win_info_cmd:=xdotool}" &>/dev/null || {
-        cmd_line "error: Couldn't find '$win_info_cmd', is it installed?"
-        return
-    }
-
-    # Get terminal window size in pixels and set it to WIDTH and HEIGHT.
-    if [[ $win_info_cmd == xdotool ]]; then
-        IFS=$'\n' read -d "" -ra win_info \
-            < <(xdotool getactivewindow getwindowgeometry --shell)
-
-        declare "${win_info[@]}" &>/dev/null || {
-            cmd_line "error: Failed to retrieve window size."
-            return
-        }
-    else
-        [[ $(fbset --show) =~ .*\"([0-9]+x[0-9]+)\".* ]]
-        IFS=x read -r WIDTH HEIGHT <<< "${BASH_REMATCH[1]}"
-    fi
-
-    # Get the image size in pixels.
-    read -r img_width img_height < <("$w3m" <<< "5;${list[scroll]}")
-
-    # Subtract the status_line area from the image size.
-    ((HEIGHT=HEIGHT-HEIGHT*5/LINES))
-
-    ((img_width > WIDTH)) && {
-        ((img_height=img_height*WIDTH/img_width))
-        ((img_width=WIDTH))
-    }
-
-    ((img_height > HEIGHT)) && {
-        ((img_width=img_width*HEIGHT/img_height))
-        ((img_height=HEIGHT))
-    }
-
     clear_screen
-    status_line "${list[scroll]}"
+    # Initialize the image index
+    img_index=$scroll
+    while true; do
+        # Clear the screen before displaying the image.
+        clear_screen
+        # Display the image.
+        chafa -d 0 "${list[img_index]}"
+        # Update the global scroll variable
+        scroll=$img_index
+        # Use status_line to display information
+        status_line "${list[img_index]}"
+        # Wait for user input.
+        read -ern 1 key
+        case "$key" in
+            j)
+                # Move to the next image
+                ((img_index < list_total)) && ((img_index++))
+                ;;
+            k)
+                # Move to the previous image
+                ((img_index > 0)) && ((img_index--))
+                ;;
+            *)
+                # Exit the image viewer
+                break
+                ;;
+        esac
+    done
+    setup_terminal
+    redraw full
+}
 
-    # Add a small delay to fix issues in VTE terminals.
-    ((BASH_VERSINFO[0] > 3)) &&
-        read "${read_flags[@]}" -srn 1
-
-    # Display the image.
-    printf '0;1;%s;%s;%s;%s;;;;;%s\n3;\n4\n' \
-        "${FFF_W3M_XOFFSET:-0}" \
-        "${FFF_W3M_YOFFSET:-0}" \
-        "$img_width" \
-        "$img_height" \
-        "${list[scroll]}" | "$w3m" &>/dev/null
-
-    # Wait for user input.
-    read -ern 1
-
-    # Clear the image.
-    printf '6;%s;%s;%s;%s\n3;' \
-        "${FFF_W3M_XOFFSET:-0}" \
-        "${FFF_W3M_YOFFSET:-0}" \
-        "$WIDTH" \
-        "$HEIGHT" | "$w3m" &>/dev/null
-
-    redraw
+draw_img_sixel() {
+    # Draw an image file on the screen using img2sixel.
+    [[ -f "${list[scroll]}" ]] || return
+    get_mime_type "${list[scroll]}"
+    [[ $mime_type != image/* ]] && return
+    # img2sixel isn't installed, do nothing.
+    type -p img2sixel &>/dev/null || {
+        cmd_line "error: Couldn't find 'img2sixel', is it installed?"
+        return
+    }
+    clear_screen
+    # Initialize the image index
+    img_index=$scroll
+    while true; do
+        # Clear the screen before displaying the image.
+        clear_screen
+        # Display the image.
+        img2sixel "${list[img_index]}"
+        # Update the global scroll variable
+        scroll=$img_index
+        # Use status_line to display information
+        status_line "${list[img_index]}"
+        # Wait for user input.
+        read -ern 1 key
+        case "$key" in
+            j)
+                # Move to the next image
+                ((img_index < list_total)) && ((img_index++))
+                ;;
+            k)
+                # Move to the previous image
+                ((img_index > 0)) && ((img_index--))
+                ;;
+            *)
+                # Exit the image viewer
+                break
+                ;;
+        esac
+    done
+    setup_terminal
+    redraw full
 }
 
 redraw() {
@@ -585,41 +586,99 @@ bulk_rename() {
 
 open() {
     # Open directories and files.
-    if [[ -d $1/ ]]; then
+    if [[ -d "$1"/ ]]; then
         search=
         search_end_early=
         cd "${1:-/}" ||:
         redraw full
-
-    elif [[ -f $1 ]]; then
+    elif [[ -f "$1" ]]; then
         # Figure out what kind of file we're working with.
         get_mime_type "$1"
-
-        # Open all text-based files in '$EDITOR'.
-        # Everything else goes through 'xdg-open'/'open'.
+        # Get the file extension
+        file_extension="${1##*.}"
+        
+        # Determine the operating system
+        case "$(uname -s)" in
+            Linux*)     os=Linux;;
+            Darwin*)    os=Mac;;
+            CYGWIN*)    os=Windows;;
+            MINGW*)     os=Windows;;
+            *)          os=Unknown;;
+        esac
+        
+        # Convert path if necessary
+        if [[ $os == "Windows" ]]; then
+            file_path=$(cygpath -w "$1")
+        else
+            file_path="$1"
+        fi
+        
         case "$mime_type" in
             text/*|*x-empty*|*json*)
-                # If 'fff' was opened as a file picker, save the opened
-                # file in a file called 'opened_file'.
+                # Text files handling remains the same
                 ((file_picker == 1)) && {
                     printf '%s\n' "$1" > \
                         "${XDG_CACHE_HOME:=${HOME}/.cache}/fff/opened_file"
                     exit
                 }
-
                 clear_screen
                 reset_terminal
-                "${VISUAL:-${EDITOR:-vi}}" "$1"
+                "${VISUAL:-${EDITOR:-nvim}}" "$file_path"
                 setup_terminal
                 redraw
             ;;
-
+            audio/*|video/*)
+                if [[ $os == "Windows" ]]; then
+                    start "" "$file_path"
+                else
+                    nohup xdg-open "$file_path" &>/dev/null &
+                fi
+            ;;
+            application/pdf)
+                if [[ $os == "Windows" ]]; then
+                    start "" "$file_path"
+                else
+                    nohup firefox "$file_path" &>/dev/null &
+                fi
+            ;;
             *)
-                # 'nohup':  Make the process immune to hangups.
-                # '&':      Send it to the background.
-                # 'disown': Detach it from the shell.
-                nohup "${FFF_OPENER:-${opener:-xdg-open}}" "$1" &>/dev/null &
-                disown
+                case "$file_extension" in
+                    doc|docx|docm)
+                        if [[ $os == "Windows" ]]; then
+                            start winword "$file_path"
+                        else
+                            nohup libreoffice --writer "$file_path" &>/dev/null &
+                        fi
+                    ;;
+                    xls|xlsx|xlsm)
+                        if [[ $os == "Windows" ]]; then
+                            start excel "$file_path"
+                        else
+                            nohup libreoffice --calc "$file_path" &>/dev/null &
+                        fi
+                    ;;
+                    ppt|pptx|pptm)
+                        if [[ $os == "Windows" ]]; then
+                            start powerpnt "$file_path"
+                        else
+                            nohup libreoffice --impress "$file_path" &>/dev/null &
+                        fi
+                    ;;
+                    one)
+                        if [[ $os == "Windows" ]]; then
+                            start onenote "$file_path"
+                        else
+                            echo "OneNote files are not supported on this OS. Please use an alternative note-taking app."
+                        fi
+                    ;;
+                    *)
+                        if [[ $os == "Windows" ]]; then
+                            start "" "$file_path"
+                        else
+                            nohup xdg-open "$file_path" &>/dev/null &
+                        fi
+                    ;;
+                esac
             ;;
         esac
     fi
@@ -739,6 +798,77 @@ cmd_line() {
     printf '\e[2K\e[?25l\e8'
 }
 
+# Spinner function
+spinner() {
+    local pid=$1
+    local text="processing-"
+    local width=5
+    local i=0
+
+    while kill -0 "$pid" 2>/dev/null; do
+        local slide_text="${text:i:width}"
+        # Wrap around the text if the end is reached
+        if (( i + width > ${#text} )); then
+            slide_text="${slide_text}${text:0:i + width - ${#text}}"
+        fi
+        status_line "$slide_text ${2:-}"
+        i=$(( (i + 1) % ${#text} ))
+        sleep 0.1
+    done
+    status_line "${3:-}"
+}
+
+extract() {
+    # Extract an archive using 7-zip
+    if [[ -f "${list[scroll]}" ]]; then
+        archive_file="${list[scroll]}"
+        archive_dir="${archive_file%.*}"
+        file_extension="${archive_file##*.}"
+        case "$file_extension" in
+            zip|rar|7z|tar|gz|tgz|bz2|tbz2|cab|arj|lzh|chm|hxs|iso|lzma|nsis|rpm|udf|wim|xz|z|001)
+                mkdir -p "$archive_dir"
+                status_line "Extracting ${archive_file##*/}..."
+                7z x "$archive_file" -o"$archive_dir" > /dev/null 2>&1 &
+                pid=$!
+                spinner $pid " Extracting ${archive_file##*/}..." "Extraction complete: ${archive_file##*/}"
+                wait $pid
+                sleep 0.1  # Give user time to read the status
+            ;;
+            *)
+                status_line "Error: Unsupported archive format"
+                sleep 0.1
+                return
+            ;;
+        esac
+        redraw full
+    fi
+}
+
+archive() {
+    # Archive the selected directory into a 7-zip archive
+    if [[ -d "${list[scroll]}" ]]; then
+        cmd_line "Archive name: "
+        [[ $cmd_reply ]] && {
+            archive_name="${cmd_reply}.7z"
+            if [[ -f "$archive_name" ]]; then
+                status_line "Warning: '$archive_name' already exists."
+                sleep 0.1
+            elif [[ -w "$PWD" ]]; then
+                status_line "Archiving to ${archive_name}..."
+                7z a -mx=9 "$archive_name" "${list[scroll]}"/* > /dev/null 2>&1 &
+                pid=$!
+                spinner $pid " Archiving to ${archive_name}..." "Archiving complete: ${archive_name}"
+                wait $pid
+                sleep 0.1
+            else
+                status_line "Warning: No write access to directory."
+                sleep 0.1
+            fi
+        }
+        redraw full
+    fi
+}
+
 key() {
     # Handle special key presses.
     [[ $1 == $'\e' ]] && {
@@ -758,7 +888,6 @@ key() {
         # '' is what bash sees when the enter/return key is pressed.
         ${FFF_KEY_CHILD1:=l}|\
         ${FFF_KEY_CHILD2:=$'\e[C'}|\
-        ${FFF_KEY_CHILD3:=""}|\
         ${FFF_KEY_CHILD4:=$'\eOC'})
             open "${list[scroll]}"
         ;;
@@ -983,12 +1112,16 @@ key() {
                 fi
         ;;
 
-        # Show file attributes.
+        # Show file attributes in human-readable format
         ${FFF_KEY_ATTRIBUTES:=x})
             [[ -e "${list[scroll]}" ]] && {
                 clear_screen
                 status_line "${list[scroll]}"
-                "${FFF_STAT_CMD:-stat}" "${list[scroll]}"
+                stat_output=$("${FFF_STAT_CMD:-stat}" "${list[scroll]}")
+                file_size=$(awk '/Size:/ {print $2}' <<< "$stat_output")
+                human_readable_size=$(numfmt --to=iec-i --suffix=B --format='%3.1f' <<< "$file_size")
+                echo "$stat_output"
+                echo "Human-readable size: $human_readable_size"
                 read -ern 1
                 redraw
             }
@@ -1010,6 +1143,11 @@ key() {
         # Show image in terminal.
         ${FFF_KEY_IMAGE:=i})
             draw_img
+        ;;
+
+        # Show image in terminal with sixel.
+        ${FFF_KEY_IMAGE_SIXEL:=I})
+            draw_img_sixel
         ;;
 
         # Go to dir.
@@ -1054,6 +1192,16 @@ key() {
                 open "$favourite"
         ;;
 
+        # Extract an archive
+        ${FFF_KEY_EXTRACT:=z})
+            extract
+        ;;
+
+        # Archive the current directory
+        ${FFF_KEY_ARCHIVE:=Z})
+            archive
+        ;;
+
         # Quit and store current directory in a file for CD on exit.
         # Don't allow user to redefine 'q' so a bad keybinding doesn't
         # remove the option to quit.
@@ -1068,6 +1216,7 @@ key() {
 
             exit
         ;;
+
     esac
 }
 
