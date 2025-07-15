@@ -1,12 +1,8 @@
-# fff (*Fucking Fast File-Manager*)
+# ffff (*Fork Fucking Fast File-manager.*)
 
 <a href="https://asciinema.org/a/qvNlrFrGB3xKZXb6GkremjZNp" target="_blank"><img src="https://asciinema.org/a/qvNlrFrGB3xKZXb6GkremjZNp.svg" alt="img" height="210px" align="right"/></a>
 
 A simple file manager written in `bash`.
-
-<a href="https://travis-ci.org/dylanaraps/fff"><img src="https://travis-ci.org/dylanaraps/fff.svg?branch=master"></a>
-<a href="https://github.com/dylanaraps/fff/releases"><img src="https://img.shields.io/github/release/dylanaraps/fff.svg"></a>
-<a href="https://repology.org/metapackage/fff"><img src="https://repology.org/badge/tiny-repos/fff.svg" alt="Packaging status"></a>
 
 - It's Fucking Fast 🚀
 - Minimal (*only requires **bash** and coreutils*)
@@ -18,8 +14,13 @@ A simple file manager written in `bash`.
 - Tab completion for all commands!
 - Automatic CD on exit (*see [setup](#cd-on-exit)*)
 - Works as a **file picker** in `vim`/`neovim` ([**link**](https://github.com/dylanaraps/fff.vim))!
-- **Display images with w3m-img!**
+- ✨**Display images with chafa**
 - Supports `$CDPATH`.
+- ✨**New**: vim-like relative number.
+- ✨**New**: history directory browser based on .bash_history.
+- ✨**New**: directory jump (kinda like Harpoon (Vim plugin)).
+- ✨**New**: extract/archive directly with 7z.
+- ❌**Removed**: favourites/bookmarks.
 
 
 ## Table of Contents
@@ -55,25 +56,16 @@ A simple file manager written in `bash`.
     - Program handling (*non-text*).
     - *Not needed on macos and Haiku.*
     - *Customizable (if not using `xdg-open`): `$FFF_OPENER`.*
+- `7z.`
 
 **Dependencies for image display**
 
-- `w3m-img`
+- `chafa`
 - `xdotool` for X.
 - `fbset` for the framebuffer.
 
 
 ## Installation
-
-### Distros
-
-- KISS Linux (based): `kiss b fff`
-- FreeBSD: `pkg install fff`
-- Haiku: `pkgman install fff`
-- macOS: `brew install fff`
-- Nix: `nix-env -iA fff`
-- Void Linux: `xbps-install -S fff`
-- Arch Linux: `pacman -S fff`
 
 ### Manual
 
@@ -92,24 +84,27 @@ A simple file manager written in `bash`.
 **NOTE:** `fff` can be uninstalled easily using `make uninstall`. This removes all of files from your system.
 
 ### CD on Exit
-#### Bash and Zsh
+#### Bash
 ```sh
 # Add this to your .bashrc, .zshrc or equivalent.
 # Run 'fff' with 'f' or whatever you decide to name the function.
+# added append cd history into bash_history
 f() {
+    local prev_dir="$PWD"
+    local cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/fff"
     fff "$@"
-    cd "$(cat "${XDG_CACHE_HOME:=${HOME}/.cache}/fff/.fff_d")"
+    local new_dir
+    new_dir="$(cat "$cache_dir/.fff_d")"
+    if [[ "$new_dir" != "$prev_dir" ]]; then
+        cd "$new_dir"
+        # Save current history to file
+        history -a
+        history -s "cd $PWD"
+        # Append 'cd <path>' command to history file
+        shopt -s histappend
+        history -w "$HISTFILE"
+    fi
 }
-```
-#### Fish
-```sh
-# Add this to you config.fish or equivalent.
-# Fish don't support recursive calls so use f function
-function f
-    fff $argv
-    set -q XDG_CACHE_HOME; or set XDG_CACHE_HOME $HOME/.cache
-    cd (cat $XDG_CACHE_HOME/fff/.fff_d)
-end
 ```
 
 ## Usage
@@ -138,7 +133,10 @@ e: refresh current dir
 !: open shell in current dir
 
 x: view file/dir attributes
-i: display image with w3m-img
+✨i: display image with chafa (while viewing you can scroll with j/k)
+✨z: extract an archive with 7z
+✨Z: archive a folder with 7z
+✨H: Opens a view of deduplicated `cd` history from ~/.bash_history (most recent first)
 
 down:  scroll down
 up:    scroll up
@@ -165,11 +163,23 @@ B: mark all for bulk rename
 p: execute paste/move/delete/bulk_rename
 c: clear file selections
 
-[1-9]: favourites/bookmarks (see customization)
-
 q: exit with 'cd' (if enabled).
 Ctrl+C: exit without 'cd'.
+
+✨[1-9]: repurposed from bookmarks to relative number navigation vim-like.
+
+✨directory jump
+✨['] (apostrophe) — Save current directory1,directory2,and clear saved directories.
+✨[;] (semicolon) — Jump to saved directory1,directory2.
+
 ```
+✨Example usecase for directory jump:
+
+    Press ' while in /project/docs → Directory 1 saved
+    Navigate to /project/src
+    Press ' again → Directory 2 saved
+    Press ; to switch between /project/docs and /project/src
+    Press ' a third time → Saved directories cleared
 
 ## Customization
 
@@ -228,21 +238,6 @@ export FFF_TRASH=~/.local/share/fff/trash
 #          and directories.
 export FFF_TRASH_CMD="mv"
 
-# Favourites (Bookmarks) (keys 1-9) (dir or file)
-export FFF_FAV1=~/projects
-export FFF_FAV2=~/.bashrc
-export FFF_FAV3=~/Pictures/Wallpapers/
-export FFF_FAV4=/usr/share
-export FFF_FAV5=/
-export FFF_FAV6=
-export FFF_FAV7=
-export FFF_FAV8=
-export FFF_FAV9=
-
-# w3m-img offsets.
-export FFF_W3M_XOFFSET=0
-export FFF_W3M_YOFFSET=0
-
 # File format.
 # Customize the item string.
 # Format ('%f' is the current file): "str%fstr"
@@ -269,12 +264,14 @@ This is the list of full keybindings along with their default values. You only n
 export FFF_KEY_CHILD1="l"
 export FFF_KEY_CHILD2=$'\e[C' # Right Arrow
 export FFF_KEY_CHILD3=""      # Enter / Return
+export FFF_KEY_CHILD4=$'\eOC' # Enter / Return
 
 # Go to parent directory.
 export FFF_KEY_PARENT1="h"
 export FFF_KEY_PARENT2=$'\e[D' # Left Arrow
 export FFF_KEY_PARENT3=$'\177' # Backspace
 export FFF_KEY_PARENT4=$'\b'   # Backspace (Older terminals)
+export FFF_KEY_PARENT5=$'\eOD' # Backspace
 
 # Go to previous directory.
 export FFF_KEY_PREVIOUS="-"
@@ -288,10 +285,12 @@ export FFF_KEY_SHELL="!"
 # Scroll down.
 export FFF_KEY_SCROLL_DOWN1="j"
 export FFF_KEY_SCROLL_DOWN2=$'\e[B' # Down Arrow
+export FFF_KEY_SCROLL_DOWN3=$'\eOB' # Down Arrow
 
 # Scroll up.
 export FFF_KEY_SCROLL_UP1="k"
 export FFF_KEY_SCROLL_UP2=$'\e[A'   # Up Arrow
+export FFF_KEY_SCROLL_UP3=$'\eOA'   # Up Arrow
 
 # Go to top and bottom.
 export FFF_KEY_TO_TOP="g"
@@ -323,7 +322,15 @@ export FFF_KEY_CLEAR="c"
 export FFF_KEY_RENAME="r"
 export FFF_KEY_MKDIR="n"
 export FFF_KEY_MKFILE="f"
-export FFF_KEY_IMAGE="i" # display image with w3m-img
+export FFF_KEY_IMAGE="i"        # display image with chafa
+
+export FFF_KEY_SAVE_DIR="'"     # save current directory to jump to later
+export FFF_KEY_GO_SAVED_DIR=';' # go to saved directory
+
+export FFF_KEY_HISTORY='H'      # view history of cd commands
+
+export FFF_KEY_EXTRACT=z        # extract
+export FFF_KEY_ARCHIVE=Z        # archive
 
 ### Miscellaneous
 
@@ -391,11 +398,6 @@ key() {
 
 read -srn 1 && key "$REPLY"
 ```
-
-## Using `fff` in vim/neovim as a file picker
-
-See: [**`fff.vim`**](https://github.com/dylanaraps/fff.vim)
-
 
 ## Why?
 
