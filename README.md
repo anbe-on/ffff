@@ -9,11 +9,12 @@ A simple file manager written in `bash`.
 - Smooth Scrolling (*using **vim** keybindings*)
 - Works on **Linux**, **BSD**, **macOS**, **Haiku** etc.
 - Supports `LS_COLORS`!
-- File Operations (*copy, paste, cut, **ranger style bulk rename**, etc*) <img src="https://i.imgur.com/tjIWUjf.jpg" alt="img" height="213px" align="right"/>
+- File Operations (*copy, paste, cut, **ranger style bulk rename**, etc*) 
+<img src="https://i.imgur.com/tjIWUjf.jpg" alt="img" height="213px" align="right"/>
+
 - Instant as you type search
 - Tab completion for all commands!
 - Automatic CD on exit (*see [setup](#cd-on-exit)*)
-- Works as a **file picker** in `vim`/`neovim` ([**link**](https://github.com/dylanaraps/fff.vim))!
 - ✨**Display images with chafa**
 - Supports `$CDPATH`.
 - ✨**New**: vim-like relative number.
@@ -41,7 +42,6 @@ A simple file manager written in `bash`.
     * [Disabling keybindings.](#disabling-keybindings)
     * [Dealing with conflicting keybindings.](#dealing-with-conflicting-keybindings)
     * [How to figure out special keys.](#how-to-figure-out-special-keys)
-* [Using `fff` in vim/neovim as a file picker](#using-fff-in-vimneovim-as-a-file-picker)
 * [Why?](#why)
 
 <!-- vim-markdown-toc -->
