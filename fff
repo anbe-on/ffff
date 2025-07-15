@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 #
-# fff - fucking fast file-manager.
+# fff - fucking fast file-manager. (original)
+# ffff - fork fucking fast file-manager.
+
+# Global variable for repeat count
+repeat_count=""
+history_full_list=()
+history_mode=0
 
 get_os() {
     # Figure out the current operating system to set some specific variables.
@@ -143,20 +149,32 @@ get_ls_colors() {
     export "${ls_cols[@]}" &>/dev/null
 }
 
-get_w3m_path() {
-    # Find the path to the w3m-img library.
-    w3m_paths=(/usr/{pkg/,}{local/,}{bin,lib,libexec,lib64,libexec64}/w3m/w3mi*)
-    read -r w3m _ < <(type -p "$FFF_W3M_PATH" w3mimgdisplay "${w3m_paths[@]}")
-}
-
 get_mime_type() {
     # Get a file's mime_type.
     mime_type=$(file "-${file_flags:-biL}" "$1" 2>/dev/null)
 }
 
 status_line() {
-    # Status_line to print when files are marked for operation.
-    local mark_ui="[${#marked_files[@]}] selected (${file_program[*]}) [p] ->"
+    # Draw the status line at the bottom of the terminal.
+    # It shows the current scroll position, any marked files, current directory and history mode.
+
+    # If the current working window is '.bash_history directory list', it shows the number of entries in the history.
+    if ((history_mode == 1)); then
+        local mark_ui=""
+        # '${1:-...}':               If a first argument is passed, use it as `status_text`.
+        #                            Otherwise, fall back to using the current working directory (`$PWD`).
+        # '$'\e[37;40m ... \e[0m'':  ANSI escape string for terminal coloring.
+        # '\e[37;40m':               Set text color to white (37) on black background (40).
+        # '.bash_h....index':        Displayed fallback text.
+        # '${PWD//[^[:print:]]/^[}': Replace all non-printable characters in `$PWD`
+        #                            with the literal string `^[` (often used to indicate control characters).
+        #                            This ensures `status_text` is safe for display in terminals.
+        local status_text="${1:-$'\e[37;40m .bash_history directory index ('${PWD//[^[:print:]]/^[}$') '}"
+    else
+        local mark_ui="[${#marked_files[@]}] selected (${file_program[*]}) [p] ->"
+        # Use current PWD
+        local status_text="${1:-${PWD//[^[:print:]]/^[}}"
+    fi
 
     # Escape the directory string.
     # Remove all non-printable characters.
@@ -165,7 +183,7 @@ status_line() {
     # '\e7':       Save cursor position.
     #              This is more widely supported than '\e[s'.
     # '\e[%sH':    Move cursor to bottom of the terminal.
-    # '\e[30;41m': Set foreground and background colors.
+    # '\e[30;47m': Set foreground and background colors.
     # '%*s':       Insert enough spaces to fill the screen width.
     #              This sets the background color to the whole line
     #              and fixes issues in 'screen' where '\e[K' doesn't work.
@@ -181,7 +199,7 @@ status_line() {
            "$COLUMNS" "" \
            "($((scroll+1))/$((list_total+1)))" \
            "${marked_files[*]:+${mark_ui}}" \
-           "${1:-${PWD_escaped:-/}}" \
+           "$status_text" \
            "$LINES"
 }
 
@@ -225,7 +243,16 @@ read_dir() {
 
 print_line() {
     # Format the list item and print it.
-    local file_name=${list[$1]##*/}
+
+    # History mode checking
+    if ((history_mode == 1)); then
+        # History mode: show full history entry
+        local file_name="${list[$1]}"
+    else
+        # Normal mode
+        local file_name="${list[$1]##*/}"
+    fi
+
     local file_ext=${file_name##*.}
     local format
     local suffix
@@ -291,7 +318,7 @@ print_line() {
 
     # If the list item is under the cursor.
     (($1 == scroll)) &&
-        format+="\\e[1;3${FFF_COL4:-6};7m"
+        format+="\\e[1;3${FFF_COL4:-7};7m"
 
     # If the list item is marked for operation.
     [[ ${marked_files[$1]} == "${list[$1]:-null}" ]] && {
@@ -303,13 +330,92 @@ print_line() {
     # Remove all non-printable characters.
     file_name=${file_name//[^[:print:]]/^[}
 
-    printf '\r%b%s\e[m\r' \
+    # Calculate relative line number (like Vim)
+    local lineno
+    if (($1 == scroll)); then
+        # Current line shows absolute line number
+        lineno=$(( $1 + 1 ))
+    else
+        # Other lines show relative distance from cursor
+        lineno=$(( $1 > scroll ? $1 - scroll : scroll - $1 ))
+    fi
+    
+    # 5-space padding without displaying the line numbers
+    # \r          Return cursor to the beginning of the line (carriage return)
+    # \e[0;37;0m  Start gray bold text (ANSI: reset + light gray + normal)
+    # %5s         Print a 5-character-wide blank space (placeholder for line number)
+    # \e[m        Reset text style to default
+    # %b          Print formatted file prefix and format string (may contain ANSI codes)
+    # %s          Print the final part: file name + optional suffix + optional postfix
+    # \e[m        Reset text style again (in case %b or %s included formatting)
+    # \r          Ensure cursor stays at the start of the line after printing
+    printf '\r\e[0;37;0m%5s\e[m %b%s\e[m\r' \
+        "" \
         "${file_pre}${format}" \
         "${file_name}${suffix}${file_post}"
 }
 
+redraw_numbers() {
+    # Redraw only the line number column (first 5 characters per line)
+    # This function is for performance by skipping full redraws.
+
+    # Save the current cursor position so we can restore it later
+    printf '\e7'
+
+    # Move the cursor to the top of the scrollable area (screen start)
+    printf '\e[H'
+
+    # Determine the visible range of items
+    # `scroll` is the current cursor line (0-based index)
+    # `y` is the cursor position in the visible window
+    local scroll_start=$((scroll - y + 1))  # First visible line index
+    ((scroll_start < 0)) && scroll_start=1  # Clamp to 1 to avoid negative values
+
+    local scroll_end=$((scroll_start + max_items))  # Last visible line index (exclusive)
+    ((scroll_end >= list_total)) && scroll_end=$((list_total + 1))  # Clamp to end of list
+
+    # Maximum number of lines to visually render (limit relative line number logic)
+    local max_display_lines=300
+
+    # Draw each visible line number
+    for ((i = scroll_start; i < scroll_end; i++)); do
+        # Only print newline after the first line to avoid extra blank line at top
+        ((i > scroll_start)) && printf '\n'
+
+        # Compute distance from the currently selected item (cursor)
+        local dist=$((i > scroll ? i - scroll : scroll - i))
+
+        # Skip if this item is too far from the current cursor (off-screen optimization)
+        ((dist > max_display_lines)) && continue
+
+        # Determine line number to display:
+        # - Show absolute line number on the current line (under cursor)
+        # - Show relative line numbers on others
+        local lineno
+        if ((i == scroll)); then
+            lineno=$((i + 1))  # Absolute line number (1-based)
+        else
+            lineno=$dist       # Relative distance from cursor
+        fi
+
+        # Pad the number to exactly 5 characters + 1 space (e.g., "    5 ", "  123 ")
+        printf -v lineno "%5d " "$lineno"
+
+        # Highlight the current line with bold white text and inverse background
+        # \e[1;37;7m    bold (1), white text (37), reverse video (7: swaps fg/bg)
+        # \e[m          reset text style
+        # \e[90m        gray text for other lines
+        # \e[0m         reset text style again
+        ((i == scroll)) && printf '\e[1;37;7m%s\e[m' "$lineno" || printf '\e[90m%s\e[m' "$lineno"
+    done
+
+    # Restore the cursor to the previously saved position
+    printf '\e8'
+}
+
 draw_dir() {
     # Print the max directory items that fit in the scroll area.
+
     local scroll_start=$scroll
     local scroll_new_pos
     local scroll_end
@@ -359,10 +465,51 @@ draw_dir() {
     # is moved to line '0'.
     printf '\e[%sH' "$scroll_new_pos"
     ((y=scroll_new_pos))
+    redraw_numbers
+}
+
+show_history() {
+    # Show the history of .bash_history
+
+    # Save current state
+    saved_list=("${list[@]}")
+    saved_cur_list=("${cur_list[@]}")
+    saved_scroll=$scroll
+    saved_list_total=$list_total
+    saved_PWD=$PWD
+    saved_marked_files=("${marked_files[@]}")
+    saved_search=$search
+    saved_history_mode=$history_mode
+
+    # Get unique history entries (most recent first)
+    history_list=()
+    while IFS= read -r line; do
+        history_list+=("$line")
+    done < <(grep -E '^cd (/|/mnt/|/[a-zA-Z]/|[a-zA-Z]:\\)' ~/.bash_history | awk '!seen[$0]++' | tac)
+
+
+    if ((${#history_list[@]} == 0)); then
+        history_list=("No history found")
+    fi
+
+    # Store full history for searching
+    history_full_list=("${history_list[@]}")
+
+    # Setup history mode
+    list=("${history_list[@]}")
+    cur_list=("${history_list[@]}")
+    scroll=0
+    list_total=${#history_list[@]}-1
+    PWD="HISTORY"
+    marked_files=()
+    search=
+    history_mode=1
+    redraw
 }
 
 draw_img() {
     # Draw an image file on the screen using chafa.
+
     [[ -f "${list[scroll]}" ]] || return
     get_mime_type "${list[scroll]}"
     [[ $mime_type != image/* ]] && return
@@ -377,51 +524,15 @@ draw_img() {
     while true; do
         # Clear the screen before displaying the image.
         clear_screen
-        # Display the image.
-        chafa -d 0 "${list[img_index]}"
-        # Update the global scroll variable
-        scroll=$img_index
-        # Use status_line to display information
-        status_line "${list[img_index]}"
-        # Wait for user input.
-        read -ern 1 key
-        case "$key" in
-            j)
-                # Move to the next image
-                ((img_index < list_total)) && ((img_index++))
-                ;;
-            k)
-                # Move to the previous image
-                ((img_index > 0)) && ((img_index--))
-                ;;
-            *)
-                # Exit the image viewer
-                break
-                ;;
-        esac
-    done
-    setup_terminal
-    redraw full
-}
 
-draw_img_sixel() {
-    # Draw an image file on the screen using img2sixel.
-    [[ -f "${list[scroll]}" ]] || return
-    get_mime_type "${list[scroll]}"
-    [[ $mime_type != image/* ]] && return
-    # img2sixel isn't installed, do nothing.
-    type -p img2sixel &>/dev/null || {
-        cmd_line "error: Couldn't find 'img2sixel', is it installed?"
-        return
-    }
-    clear_screen
-    # Initialize the image index
-    img_index=$scroll
-    while true; do
-        # Clear the screen before displaying the image.
-        clear_screen
-        # Display the image.
-        img2sixel "${list[img_index]}"
+        # Get terminal height and apply 98% scaling
+        term_width=$(tput cols)
+        term_height=$(tput lines)
+        max_height=$(( term_height * 95 / 100 ))
+
+        # Display the image with limited height
+        chafa -d 0 --size="${term_width}x${max_height}" --scale=max "${list[img_index]}"
+
         # Update the global scroll variable
         scroll=$img_index
         # Use status_line to display information
@@ -443,8 +554,10 @@ draw_img_sixel() {
                 ;;
         esac
     done
+    # Reset the scroll position to the current image index
+    scroll=$img_index
     setup_terminal
-    redraw full
+    redraw
 }
 
 redraw() {
@@ -586,7 +699,33 @@ bulk_rename() {
 
 open() {
     # Open directories and files.
-    if [[ -d "$1"/ ]]; then
+
+    if [[ $PWD == "HISTORY" ]]; then
+        # Extract directory from history line
+        local selected_dir="${list[scroll]#cd }"
+        
+        # Restore previous state
+        list=("${saved_list[@]}")
+        cur_list=("${saved_cur_list[@]}")
+        scroll=$saved_scroll
+        list_total=$saved_list_total
+        PWD=$saved_PWD
+        marked_files=("${saved_marked_files[@]}")
+        search=$saved_search
+        history_mode=$saved_history_mode
+
+        # Change to selected directory
+        cd "$selected_dir" 2>/dev/null || {
+            cmd_line "error: Cannot access '$selected_dir'"
+            redraw
+            return
+        }
+        
+        redraw full
+        # RESTORE HISTORY MODE FLAG
+        history_mode=0
+    # Open directories and files.
+    elif [[ -d "$1"/ ]]; then
         search=
         search_end_early=
         cd "${1:-/}" ||:
@@ -614,8 +753,10 @@ open() {
         fi
         
         case "$mime_type" in
+            # 'start' is used to open files with their default applications on WIndows.
+            # 'open':   Open a file in the default application on Mac.
             text/*|*x-empty*|*json*)
-                # Text files handling remains the same
+                # Text files handling
                 ((file_picker == 1)) && {
                     printf '%s\n' "$1" > \
                         "${XDG_CACHE_HOME:=${HOME}/.cache}/fff/opened_file"
@@ -623,62 +764,76 @@ open() {
                 }
                 clear_screen
                 reset_terminal
-                "${VISUAL:-${EDITOR:-nvim}}" "$file_path"
+                # Open all text-based files in '$EDITOR'.
+                "${VISUAL:-${EDITOR:-}}" "$file_path"
                 setup_terminal
                 redraw
             ;;
             audio/*|video/*)
                 if [[ $os == "Windows" ]]; then
                     start "" "$file_path"
+                elif [[ $os == "Mac" ]]; then
+                    open "$file_path" &>/dev/null &
                 else
                     nohup xdg-open "$file_path" &>/dev/null &
+                    disown
                 fi
             ;;
             application/pdf)
                 if [[ $os == "Windows" ]]; then
                     start "" "$file_path"
+                elif [[ $os == "Mac" ]]; then
+                    open "$file_path" &>/dev/null &
                 else
-                    nohup firefox "$file_path" &>/dev/null &
+                    nohup xdg-open "$file_path" &>/dev/null &
+                    disown
+                fi
+            ;;
+            application/msword|application/vnd.openxmlformats-officedocument.wordprocessingml.*)
+                if [[ $os == "Windows" ]]; then
+                    start winword "$file_path"
+                elif [[ $os == "Mac" ]]; then
+                    open -a "Microsoft Word" "$file_path" &>/dev/null &
+                else
+                    nohup xdg-open "$file_path" &>/dev/null &
+                    disown
+                fi
+            ;;
+            application/vnd.ms-excel|application/vnd.openxmlformats-officedocument.spreadsheetml.*)
+                if [[ $os == "Windows" ]]; then
+                    start excel "$file_path"
+                elif [[ $os == "Mac" ]]; then
+                    open -a "Microsoft Excel" "$file_path" &>/dev/null &
+                else
+                    nohup xdg-open "$file_path" &>/dev/null &
+                    disown
+                fi
+            ;;
+            application/vnd.ms-powerpoint|application/vnd.openxmlformats-officedocument.presentationml.*)
+                if [[ $os == "Windows" ]]; then
+                    start powerpnt "$file_path"
+                elif [[ $os == "Mac" ]]; then
+                    open -a "Microsoft PowerPoint" "$file_path" &>/dev/null &
+                else
+                    nohup xdg-open "$file_path" &>/dev/null &
+                    disown
                 fi
             ;;
             *)
-                case "$file_extension" in
-                    doc|docx|docm)
-                        if [[ $os == "Windows" ]]; then
-                            start winword "$file_path"
-                        else
-                            nohup libreoffice --writer "$file_path" &>/dev/null &
-                        fi
-                    ;;
-                    xls|xlsx|xlsm)
-                        if [[ $os == "Windows" ]]; then
-                            start excel "$file_path"
-                        else
-                            nohup libreoffice --calc "$file_path" &>/dev/null &
-                        fi
-                    ;;
-                    ppt|pptx|pptm)
-                        if [[ $os == "Windows" ]]; then
-                            start powerpnt "$file_path"
-                        else
-                            nohup libreoffice --impress "$file_path" &>/dev/null &
-                        fi
-                    ;;
-                    one)
-                        if [[ $os == "Windows" ]]; then
-                            start onenote "$file_path"
-                        else
-                            echo "OneNote files are not supported on this OS. Please use an alternative note-taking app."
-                        fi
-                    ;;
-                    *)
-                        if [[ $os == "Windows" ]]; then
-                            start "" "$file_path"
-                        else
-                            nohup xdg-open "$file_path" &>/dev/null &
-                        fi
-                    ;;
-                esac
+                # Generic opener for all other types
+                if [[ $os == "Windows" ]]; then
+                    # 'start' is used to open files with their default applications on WIndows.
+                    start "" "$file_path"
+                elif [[ $os == "Mac" ]]; then
+                    # 'open':   Open a file in the default application on Mac.
+                    open "$file_path" &>/dev/null &
+                else
+                    # 'nohup':  Make the process immune to hangups.
+                    # '&':      Send it to the background.
+                    # 'disown': Detach it from the shell.
+                    nohup "${FFF_OPENER:-${opener:-xdg-open}}" "$1" &>/dev/null &
+                    disown
+                fi
             ;;
         esac
     fi
@@ -775,9 +930,25 @@ cmd_line() {
             # '\e[?25l': Hide the cursor.
             printf '\e[?25l'
 
-            # Use a greedy glob to search.
-            list=("$PWD"/*"$cmd_reply"*)
-            ((list_total=${#list[@]}-1))
+            if [[ $PWD == "HISTORY" ]]; then
+                # Search in history mode
+                list=()
+                if [[ -n $cmd_reply ]]; then
+                    for item in "${history_full_list[@]}"; do
+                        if [[ $item == *"$cmd_reply"* ]]; then
+                            list+=("$item")
+                        fi
+                    done
+                else
+                    list=("${history_full_list[@]}")
+                fi
+                ((list_total=${#list[@]}-1))
+            else
+                # Regular search
+                # Use a greedy glob to search.
+                list=("$PWD"/*"$cmd_reply"*)
+                ((list_total=${#list[@]}-1))
+            fi
 
             # Draw the search results on screen.
             scroll=0
@@ -798,44 +969,50 @@ cmd_line() {
     printf '\e[2K\e[?25l\e8'
 }
 
-# Spinner function
-spinner() {
-    local pid=$1
-    local text="processing-"
-    local width=5
-    local i=0
-
-    while kill -0 "$pid" 2>/dev/null; do
-        local slide_text="${text:i:width}"
-        # Wrap around the text if the end is reached
-        if (( i + width > ${#text} )); then
-            slide_text="${slide_text}${text:0:i + width - ${#text}}"
-        fi
-        status_line "$slide_text ${2:-}"
-        i=$(( (i + 1) % ${#text} ))
-        sleep 0.1
-    done
-    status_line "${3:-}"
-}
-
 extract() {
+    # Extract an archive using 7-zip.
+
+    if ! command -v 7z &>/dev/null; then
+        status_line "Error: '7z' (7-Zip) is not installed."
+        return
+    fi
+
     # Extract an archive using 7-zip
     if [[ -f "${list[scroll]}" ]]; then
         archive_file="${list[scroll]}"
         archive_dir="${archive_file%.*}"
-        file_extension="${archive_file##*.}"
-        case "$file_extension" in
-            zip|rar|7z|tar|gz|tgz|bz2|tbz2|cab|arj|lzh|chm|hxs|iso|lzma|nsis|rpm|udf|wim|xz|z|001)
+
+        # Get MIME type
+        mime_type=$(file -b --mime-type -- "$archive_file")
+
+        case "$mime_type" in
+            application/zip|\
+            application/x-7z-compressed|\
+            application/x-rar|\
+            application/x-rar-compressed|\
+            application/x-tar|\
+            application/gzip|\
+            application/x-bzip2|\
+            application/x-xz|\
+            application/x-cab|\
+            application/x-iso9660-image|\
+            application/x-lzma|\
+            application/x-rpm|\
+            application/x-archive)
                 mkdir -p "$archive_dir"
-                status_line "Extracting ${archive_file##*/}..."
                 7z x "$archive_file" -o"$archive_dir" > /dev/null 2>&1 &
                 pid=$!
-                spinner $pid " Extracting ${archive_file##*/}..." "Extraction complete: ${archive_file##*/}"
-                wait $pid
-                sleep 0.1  # Give user time to read the status
+
+                while kill -0 "$pid" 2>/dev/null; do
+                    status_line $'\e[37;40m Extracting '"${archive_file##*/}..."$'\e[0m'
+                    sleep 1
+                done
+
+                status_line $'\e[37;40m Extraction complete: '"${archive_file##*/}"$'\e[0m'
+                sleep 0.1
             ;;
             *)
-                status_line "Error: Unsupported archive format"
+                status_line "Error: Unsupported MIME type: $mime_type"
                 sleep 0.1
                 return
             ;;
@@ -845,6 +1022,13 @@ extract() {
 }
 
 archive() {
+    # Archive a directory into a 7-zip archive.
+
+    if ! command -v 7z &>/dev/null; then
+        status_line "Error: '7z' (7-Zip) is not installed."
+        return
+    fi
+
     # Archive the selected directory into a 7-zip archive
     if [[ -d "${list[scroll]}" ]]; then
         cmd_line "Archive name: "
@@ -854,11 +1038,15 @@ archive() {
                 status_line "Warning: '$archive_name' already exists."
                 sleep 0.1
             elif [[ -w "$PWD" ]]; then
-                status_line "Archiving to ${archive_name}..."
                 7z a -mx=9 "$archive_name" "${list[scroll]}"/* > /dev/null 2>&1 &
                 pid=$!
-                spinner $pid " Archiving to ${archive_name}..." "Archiving complete: ${archive_name}"
-                wait $pid
+
+                while kill -0 "$pid" 2>/dev/null; do
+                    status_line $'\e[37;40m Archiving to '"$archive_name..."$'\e[0m'
+                    sleep 1
+                done
+
+                status_line $'\e[37;40m Archiving complete: '"$archive_name"$'\e[0m'
                 sleep 0.1
             else
                 status_line "Warning: No write access to directory."
@@ -881,6 +1069,53 @@ key() {
         local special_key=${1}${REPLY}
     }
 
+    # Cancel repeat count or pending keys by pressing only Esc
+    if [[ ${special_key} == $'\e' ]]; then
+        repeat_count=""
+        status_line $'\e[2K\r'  # Clear line
+        redraw
+        return
+    fi
+
+    # Accumulate numbers for vim-like motion
+    if [[ -z $special_key && $1 =~ [0-9] ]]; then
+        repeat_count=$(( repeat_count * 10 + $1 ))
+        status_line $'\e[37;40m Line: '"$repeat_count " $'\e[0m'
+        return
+    fi
+
+    # Handle vim-like motions with repeat count
+    if [[ -n $repeat_count ]]; then
+        local count=$((10#$repeat_count))  # Convert to decimal, ignore leading zeros
+        repeat_count=""
+        
+        case ${special_key:-$1} in
+            ${FFF_KEY_SCROLL_DOWN1:=j}|\
+            ${FFF_KEY_SCROLL_DOWN2:=$'\e[B'}|\
+            ${FFF_KEY_SCROLL_DOWN3:=$'\eOB'})
+                ((new_scroll = scroll + count))
+                ((new_scroll = new_scroll > list_total ? list_total : new_scroll))
+                if ((new_scroll != scroll)); then
+                    scroll=$new_scroll
+                    redraw
+                fi
+                return
+                ;;
+                
+            ${FFF_KEY_SCROLL_UP1:=k}|\
+            ${FFF_KEY_SCROLL_UP2:=$'\e[A'}|\
+            ${FFF_KEY_SCROLL_UP3:=$'\eOA'})
+                ((new_scroll = scroll - count))
+                ((new_scroll = new_scroll < 0 ? 0 : new_scroll))
+                if ((new_scroll != scroll)); then
+                    scroll=$new_scroll
+                    redraw
+                fi
+                return
+                ;;
+        esac
+    fi
+
     case ${special_key:-$1} in
         # Open list item.
         # 'C' is what bash sees when the right arrow is pressed
@@ -888,6 +1123,7 @@ key() {
         # '' is what bash sees when the enter/return key is pressed.
         ${FFF_KEY_CHILD1:=l}|\
         ${FFF_KEY_CHILD2:=$'\e[C'}|\
+        ${FFF_KEY_CHILD3:=""}|\
         ${FFF_KEY_CHILD4:=$'\eOC'})
             open "${list[scroll]}"
         ;;
@@ -902,8 +1138,14 @@ key() {
         ${FFF_KEY_PARENT3:=$'\177'}|\
         ${FFF_KEY_PARENT4:=$'\b'}|\
         ${FFF_KEY_PARENT5:=$'\eOD'})
+            # Exit history mode if active
+            if ((history_mode == 1)); then
+                # Restore saved state from before history mode
+                PWD=$saved_PWD
+                history_mode=0
+                redraw full
             # If a search was done, clear the results and open the current dir.
-            if ((search == 1 && search_end_early != 1)); then
+            elif ((search == 1 && search_end_early != 1)); then
                 open "$PWD"
 
             # If '$PWD' is '/', do nothing.
@@ -923,10 +1165,16 @@ key() {
                 ((scroll++))
                 ((y < max_items)) && ((y++))
 
-                print_line "$((scroll-1))"
-                printf '\n'
-                print_line "$scroll"
-                status_line
+                if ((scroll == list_total)); then
+                    # full redraw when reaching last item
+                    redraw
+                else
+                    print_line "$((scroll - 1))"
+                    printf '\n'
+                    print_line "$scroll"
+                    status_line
+                    redraw_numbers
+                fi
             }
         ;;
 
@@ -941,17 +1189,23 @@ key() {
             ((scroll > 0)) && {
                 ((scroll--))
 
-                print_line "$((scroll+1))"
-
-                if ((y < 2)); then
-                    printf '\e[L'
+                if ((scroll <= 0)); then
+                    # full redraw near top
+                    redraw
                 else
-                    printf '\e[A'
-                    ((y--))
-                fi
+                    print_line "$((scroll + 1))"
 
-                print_line "$scroll"
-                status_line
+                    if ((y < 2)); then
+                        printf '\e[L'
+                    else
+                        printf '\e[A'
+                        ((y--))
+                    fi
+
+                    print_line "$scroll"
+                    status_line
+                    redraw_numbers
+                fi
             }
         ;;
 
@@ -1016,6 +1270,7 @@ key() {
         ${FFF_KEY_LINK:=s}|\
         ${FFF_KEY_BULK_RENAME:=b})
             mark "$scroll" "$1"
+            redraw_numbers
         ;;
 
         # Mark all files for operation.
@@ -1025,6 +1280,7 @@ key() {
         ${FFF_KEY_LINK_ALL:=S}|\
         ${FFF_KEY_BULK_RENAME_ALL:=B})
             mark all "$1"
+            redraw_numbers
         ;;
 
         # Do the file operation.
@@ -1145,9 +1401,38 @@ key() {
             draw_img
         ;;
 
-        # Show image in terminal with sixel.
-        ${FFF_KEY_IMAGE_SIXEL:=I})
-            draw_img_sixel
+        # Save directory to go back later
+        ${FFF_KEY_SAVE_DIR:="'"})
+            if [[ -z "$saved_dir1" ]]; then
+                saved_dir1="$PWD"
+                status_line "Directory 1 saved: $saved_dir1"
+            elif [[ -z "$saved_dir2" ]]; then
+                saved_dir2="$PWD"
+                status_line "Directory 2 saved: $saved_dir2"
+            else
+                saved_dir1=""
+                saved_dir2=""
+                status_line "Saved directories cleared"
+            fi
+        ;;
+
+        # Go to saved directory or last directory
+        ${FFF_KEY_GO_SAVED_DIR:=';'})
+            if [[ -n "$saved_dir1" && -n "$saved_dir2" ]]; then
+                # Flip-flop between the two saved directories
+                if [[ "$PWD" == "$saved_dir1" ]]; then
+                    open "$saved_dir2"
+                else
+                    open "$saved_dir1"
+                fi
+            elif [[ -n "$saved_dir1" ]]; then
+                open "$saved_dir1"
+            elif [[ -n "$saved_dir2" ]]; then
+                open "$saved_dir2"
+            else
+                # No saved directories, do nothing
+                :
+            fi
         ;;
 
         # Go to dir.
@@ -1183,13 +1468,9 @@ key() {
             open "$PWD"
         ;;
 
-        # Directory favourites.
-        [1-9])
-            favourite="FFF_FAV${1}"
-            favourite="${!favourite}"
-
-            [[ $favourite ]] &&
-                open "$favourite"
+        # Show history
+        ${FFF_KEY_HISTORY:='H'})
+            show_history
         ;;
 
         # Extract an archive
@@ -1216,7 +1497,6 @@ key() {
 
             exit
         ;;
-
     esac
 }
 
@@ -1277,7 +1557,6 @@ main() {
 
     get_os
     get_term_size
-    get_w3m_path
     setup_options
     setup_terminal
     redraw full
