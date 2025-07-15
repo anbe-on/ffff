@@ -169,8 +169,8 @@ Ctrl+C: exit without 'cd'.
 ✨[1-9]: repurposed from bookmarks to relative number navigation vim-like.
 
 ✨directory jump
-✨['] (apostrophe) — Save current directory1,directory2,and clear saved directories.
-✨[;] (semicolon) — Jump to saved directory1,directory2.
+✨'(apostrophe): Save current directory1, directory2, and clear saved directories.
+✨;(semicolon):  Jump to saved directory1, directory2.
 
 ```
 ✨Example usecase for directory jump:
