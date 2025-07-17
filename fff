@@ -406,7 +406,7 @@ redraw_numbers() {
         # \e[m          reset text style
         # \e[90m        gray text for other lines
         # \e[0m         reset text style again
-        ((i == scroll)) && printf '\e[1;37;7m%s\e[m' "$lineno" || printf '\e[90m%s\e[m' "$lineno"
+        ((i == scroll)) && printf '\e[1;3%s;7m%s\e[m' "${FFF_COL4:-7}" "$lineno" || printf '\e[90m%s\e[m' "$lineno"
     done
 
     # Restore the cursor to the previously saved position
