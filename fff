@@ -4,6 +4,7 @@
 # ffff - fork fucking fast file-manager.
 
 # Global variable for repeat count
+LANG=ja_JP.UTF-8
 repeat_count=""
 history_full_list=()
 history_mode=0
