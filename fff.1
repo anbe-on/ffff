@@ -34,17 +34,23 @@ e: refresh current dir
 !: open shell in current dir
 
 x: view file/dir attributes
-i: display image with w3m-img
+i: display image with chafa
 
 down:  scroll down
 up:    scroll up
 left:  go to parent dir
 right: go to child dir
+[1-9]: repurposed from bookmarks to relative number navigation vim-like.
 
 f: new file
 n: new dir
 r: rename
 X: toggle executable
+H: Opens a view of deduplicated `cd` history from ~/.bash_history (most recent first)
+z: extract an archive with 7z
+Z: archive a folder with 7z
+'(apostrophe): Save current directory1, directory2, and clear saved directories.
+;(semicolon) : Jump to saved directory1, directory2.
 
 y: mark copy
 m: mark move
@@ -125,21 +131,6 @@ export FFF_TRASH=~/.local/share/fff/trash
 #          The program will be passed the list of selected files
 #          and directories.
 export FFF_TRASH_CMD="mv"
-
-# Favourites (Bookmarks) (keys 1-9) (dir or file)
-export FFF_FAV1=~/projects
-export FFF_FAV2=~/.bashrc
-export FFF_FAV3=~/Pictures/Wallpapers/
-export FFF_FAV4=/usr/share
-export FFF_FAV5=/
-export FFF_FAV6=
-export FFF_FAV7=
-export FFF_FAV8=
-export FFF_FAV9=
-
-# w3m-img offsets.
-export FFF_W3M_XOFFSET=0
-export FFF_W3M_YOFFSET=0
 
 # File format.
 # Customize the item string.

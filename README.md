@@ -81,6 +81,8 @@ A simple file manager written in `bash`.
     - **MinGW/MSys**: `make -i install`
     - **NOTE**: You may have to run this as root.
 
+or one-liner (only works in bash): ```curl -fsSL https://raw.githubusercontent.com/anbe-on/ffff/master/install.sh | bash```
+
 **NOTE:** `fff` can be uninstalled easily using `make uninstall`. This removes all of files from your system.
 
 ### CD on Exit
