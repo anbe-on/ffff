@@ -522,6 +522,10 @@ draw_img() {
     clear_screen
     # Initialize the image index
     img_index=$scroll
+    
+    # Track marked files within image viewer
+    local img_marked_files=()
+    
     while true; do
         # Clear the screen before displaying the image.
         clear_screen
@@ -536,8 +540,14 @@ draw_img() {
 
         # Update the global scroll variable
         scroll=$img_index
-        # Use status_line to display information
-        status_line "${list[img_index]}"
+        
+        # Show marked status if file is marked
+        if [[ " ${img_marked_files[@]} " =~ " ${list[img_index]} " ]]; then
+            status_line "marked deletion ${list[img_index]}"
+        else
+            status_line "${list[img_index]}"
+        fi
+        
         # Wait for user input.
         read -ern 1 key
         case "$key" in
@@ -549,6 +559,32 @@ draw_img() {
                 # Move to the previous image
                 ((img_index > 0)) && ((img_index--))
                 ;;
+            d)
+                # Toggle mark for deletion
+                if [[ " ${img_marked_files[@]} " =~ " ${list[img_index]} " ]]; then
+                    # Unmark: remove from array
+                    img_marked_files=("${img_marked_files[@]/${list[img_index]}}")
+                else
+                    # Mark for deletion
+                    img_marked_files+=("${list[img_index]}")
+                fi
+                ;;
+            D)
+                # Delete marked files
+                if ((${#img_marked_files[@]} > 0)); then
+                    clear_screen
+                    reset_terminal
+                    printf 'Delete %d marked files? [y/n]: ' "${#img_marked_files[@]}"
+                    read -ern 1 confirm
+                    if [[ $confirm == y ]]; then
+                        trash "${img_marked_files[@]}" .
+                        img_marked_files=()
+                        setup_terminal
+                        break
+                    fi
+                    setup_terminal
+                fi
+                ;;
             *)
                 # Exit the image viewer
                 break
@@ -558,7 +594,7 @@ draw_img() {
     # Reset the scroll position to the current image index
     scroll=$img_index
     setup_terminal
-    redraw
+    redraw full
 }
 
 redraw() {
