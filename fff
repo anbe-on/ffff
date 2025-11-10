@@ -611,7 +611,7 @@ draw_img() {
     # Reset the scroll position to the current image index
     scroll=$img_index
     setup_terminal
-    redraw full
+    redraw
 }
 
 redraw() {
