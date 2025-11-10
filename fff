@@ -543,7 +543,15 @@ draw_img() {
         
         # Show marked status if file is marked
         if [[ " ${img_marked_files[@]} " =~ " ${list[img_index]} " ]]; then
-            status_line "marked deletion ${list[img_index]}"
+            # Find position in marked array (1-based index)
+            local pos=0
+            for i in "${!img_marked_files[@]}"; do
+                [[ ${img_marked_files[$i]} == "${list[img_index]}" ]] && {
+                    pos=$((i + 1))
+                    break
+                }
+            done
+            status_line "[${pos}/${#img_marked_files[@]}] marked deletion [p] ${list[img_index]}"
         else
             status_line "${list[img_index]}"
         fi
@@ -563,26 +571,35 @@ draw_img() {
                 # Toggle mark for deletion
                 if [[ " ${img_marked_files[@]} " =~ " ${list[img_index]} " ]]; then
                     # Unmark: remove from array
-                    img_marked_files=("${img_marked_files[@]/${list[img_index]}}")
+                    local temp_array=()
+                    for item in "${img_marked_files[@]}"; do
+                        [[ $item != "${list[img_index]}" ]] && temp_array+=("$item")
+                    done
+                    img_marked_files=("${temp_array[@]}")
                 else
                     # Mark for deletion
                     img_marked_files+=("${list[img_index]}")
                 fi
                 ;;
-            D)
+            p)
                 # Delete marked files
                 if ((${#img_marked_files[@]} > 0)); then
                     clear_screen
                     reset_terminal
-                    printf 'Delete %d marked files? [y/n]: ' "${#img_marked_files[@]}"
-                    read -ern 1 confirm
-                    if [[ $confirm == y ]]; then
-                        trash "${img_marked_files[@]}" .
-                        img_marked_files=()
-                        setup_terminal
-                        break
-                    fi
+                    
+                    # Copy to global marked_files array for trash() function
+                    marked_files=("${img_marked_files[@]}")
+                    
+                    stty echo
+                    trash "${img_marked_files[@]}" .
+                    stty -echo
+                    
+                    # Clear both arrays after deletion
+                    img_marked_files=()
+                    marked_files=()
+                    
                     setup_terminal
+                    break
                 fi
                 ;;
             *)
