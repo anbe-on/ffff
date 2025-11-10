@@ -331,6 +331,12 @@ print_line() {
     # Remove all non-printable characters.
     file_name=${file_name//[^[:print:]]/^[}
 
+    # Truncate file_name to fit terminal width (COLUMNS - 8: 5 for num +1 space +2 buffer).
+    local max_file_len=$((COLUMNS - 8))
+    if ((${#file_name} > max_file_len)); then
+        file_name="${file_name:0:$max_file_len}…"  # Truncate and add ellipsis
+    fi
+
     # Calculate relative line number (like Vim)
     local lineno
     if (($1 == scroll)); then
@@ -487,7 +493,6 @@ show_history() {
     while IFS= read -r line; do
         history_list+=("$line")
     done < <(grep -E '^cd (/|/mnt/|/[a-zA-Z]/|[a-zA-Z]:\\)' ~/.bash_history | awk '!seen[$0]++' | tac)
-
 
     if ((${#history_list[@]} == 0)); then
         history_list=("No history found")
@@ -758,6 +763,9 @@ open() {
         # Extract directory from history line
         local selected_dir="${list[scroll]#cd }"
         
+        # Save current history position
+        local saved_history_scroll=$scroll
+        
         # Restore previous state
         list=("${saved_list[@]}")
         cur_list=("${saved_cur_list[@]}")
@@ -769,15 +777,37 @@ open() {
         history_mode=$saved_history_mode
 
         # Change to selected directory
-        cd "$selected_dir" 2>/dev/null || {
+        if cd "$selected_dir" 2>/dev/null; then
+            redraw full
+            # RESTORE HISTORY MODE FLAG
+            history_mode=0
+        else
+            # Failed to cd, go back to history mode
             cmd_line "error: Cannot access '$selected_dir'"
+            
+            # Re-enter history mode with saved position
+            saved_list=("${list[@]}")
+            saved_cur_list=("${cur_list[@]}")
+            saved_scroll=$scroll
+            saved_list_total=$list_total
+            saved_PWD=$PWD
+            saved_marked_files=("${marked_files[@]}")
+            saved_search=$search
+            saved_history_mode=$history_mode
+            
+            # Restore history list
+            list=("${history_full_list[@]}")
+            cur_list=("${history_full_list[@]}")
+            scroll=$saved_history_scroll
+            list_total=${#history_full_list[@]}-1
+            PWD="HISTORY"
+            marked_files=()
+            search=
+            history_mode=1
             redraw
-            return
-        }
-        
-        redraw full
-        # RESTORE HISTORY MODE FLAG
-        history_mode=0
+        fi
+        return
+
     # Open directories and files.
     elif [[ -d "$1"/ ]]; then
         search=
