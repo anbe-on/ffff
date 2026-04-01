@@ -541,7 +541,7 @@ draw_img() {
         max_height=$(( term_height * 95 / 100 ))
 
         # Display the image with limited height
-        chafa -d 0 --size="${term_width}x${max_height}" --scale=max "${list[img_index]}"
+        chafa --clear -d 0 --size="${term_width}x${max_height}" --scale=max "${list[img_index]}"
 
         # Update the global scroll variable
         scroll=$img_index
